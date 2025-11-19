@@ -1,1 +1,10 @@
 # ntn_prach_receiver
+This repository provides a framework for generation, simulation, and evaluation of 5G NR PRACH (Physical Random Access Channel) in Non-Terrestrial Network (NTN) environments.
+The project compares two state-of-the-art PRACH receivers:
+
+MATLAB nrPRACHDetect (5G Toolbox)
+
+srsPRACHDetector (srsRAN-matlab C++ MEX) 
+------srsRAN_matlab project is required--------
+
+The goal is to evaluate detection probability, timing estimation accuracy, and robustness against satellite Doppler, under realistic NTN channel models and across multiple elevation angles.
