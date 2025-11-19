@@ -1,10 +1,9 @@
-
 %%%%%%%%%%%%  MATLAB nrPRACHDetect vs SRSRAN MEX detector Test %%%%%%%%%%%%
 % -------------------------------------------------------------------------------------------------------------------
 % MATLAB nrPRACHDetect: https://www.mathworks.com/help/5g/ref/nrprachdetect.html
 % SRSRAN MEX detector: https://docs.srsran.com/projects/project/en/latest/tutorials/source/matlab/source/index.html
 % -------------------------------------------------------------------------------------------------------------------
-% This code follow the following steps:
+% This code follows the following steps:
 %   - Generate identical PRACH
 %   - Apply a NTN-TDL channel in accordance to 
 %     https://it.mathworks.com/help/satcom/ug/model-nr-ntn-channel.html
@@ -28,7 +27,16 @@ threshold = [];
 timeErrorTolerance_us = 2.55;
 
 nRx = 2;
-useFreqOffsetHz = 0;
+
+%% --------------------- Doppler pre-compensation control ----------------
+% If true, the UE applies Doppler pre-compensation equal to -satDoppler.
+% If false, no pre-compensation is applied.
+enablePrecomp = true;
+
+% Optional residual error in the pre-compensation (in Hz).
+%   precompErrorHz = 0      -> perfect pre-compensation
+%   precompErrorHz = 20     -> 20 Hz residual Doppler at the receiver
+precompErrorHz = 0;
 
 %% --------------------- PRACH configuration ----------------------------
 carrier = nrCarrierConfig;
@@ -61,6 +69,7 @@ try
     end
     prach.ZeroCorrelationZone = ncsTable.ZeroCorrelationZone(ncsTable{:,col}==NCS);
 catch
+    % Keep default ZCZ if anything goes wrong
 end
 
 ofdmInfo = nrOFDMInfo(carrier);
@@ -101,6 +110,20 @@ for iEl = 1:nElev
     c = physconst('lightspeed');
     mobileMaxDoppler = common.MobileSpeed * common.CarrierFrequency / c;
 
+    % ----------------- Doppler pre-compensation setting -----------------
+    % useFreqOffsetHz is the frequency offset applied at the receiver to
+    % emulate UE pre-compensation (i.e., the signal is rotated by
+    % exp(1j*2*pi*useFreqOffsetHz*t)).
+    if enablePrecomp
+        % Perfect pre-compensation if precompErrorHz = 0.
+        % Positive precompErrorHz leaves a residual Doppler at the receiver.
+        useFreqOffsetHz = -(satDoppler - precompErrorHz);
+    else
+        % No pre-compensation (full Doppler is present at the receiver).
+        useFreqOffsetHz = 0;
+    end
+    % -------------------------------------------------------------------
+
     %% ===============================================================
     %                        SNR LOOP
     % ===============================================================
@@ -121,7 +144,7 @@ for iEl = 1:nElev
 
             prach.NPRACHSlot = genInfo.NPRACHSlot;
 
-            % True timing offset
+            % True timing offset (random in [0.1, 1.0] of the smallest ZCZ)
             trueDelay_s = (0.1 + 0.9*rand) / ...
                           (prach.SubcarrierSpacing * 1000 * 128);
             delaySamples = floor(trueDelay_s * gridset.Info.SampleRate);
@@ -137,7 +160,7 @@ for iEl = 1:nElev
             ntnTDL.SampleRate            = gridset.Info.SampleRate;
             ntnTDL.MaximumDopplerShift   = mobileMaxDoppler;
             ntnTDL.SatelliteDopplerShift = satDoppler;
-            ntnTDL.NumReceiveAntennas    = 2;
+            ntnTDL.NumReceiveAntennas    = nRx;
             ntnTDL.NormalizePathGains    = true;
             ntnTDL.NormalizeChannelOutputs = true;
             ntnTDL.Seed = common.Seed;
@@ -148,7 +171,7 @@ for iEl = 1:nElev
             rx = ntnTDL([txWave; zeros(chInfo.MaximumChannelDelay,1)]);
             rx = rx((chInfo.ChannelFilterDelay+1):end, :);
 
-            % ----------- 3) Optional Freq offset ---------------------
+            % ----------- 3) Optional Freq offset (pre-compensation) ---
             if useFreqOffsetHz ~= 0
                 t = ((0:size(rx,1)-1)/ntnTDL.SampleRate).';
                 rx = rx .* exp(1j*2*pi*useFreqOffsetHz*t);
@@ -165,12 +188,12 @@ for iEl = 1:nElev
 
             if numel(det)==1 && det==prach.PreambleIndex
                 meas_s = offs(1)/ntnTDL.SampleRate;
-                err_s = abs(meas_s - trueDelay_s);
+                err_s  = abs(meas_s - trueDelay_s);
                 if err_s <= timeErrorTolerance_us * 1e-6
                     detCountMat = detCountMat + 1;
                 end
-                errAccMat = errAccMat + err_s*1e6;
-                countMat  = countMat + 1;
+                errAccMat = errAccMat + err_s*1e6;  % accumulate error in microseconds
+                countMat  = countMat  + 1;
             end
 
             % ----------- 5b) SRS detector ----------------------------
@@ -187,7 +210,7 @@ for iEl = 1:nElev
                     detCountSRS = detCountSRS + 1;
                     ta = resSRS.TimeAdvance(mask);
                     errAccSRS = errAccSRS + abs(ta - trueDelay_s)*1e6;
-                    countSRS  = countSRS + 1;
+                    countSRS  = countSRS  + 1;
                 end
             end
 
@@ -203,11 +226,13 @@ for iEl = 1:nElev
         if countSRS>0
             mae_SRS_us(iEl,iSNR) = errAccSRS / countSRS;
         end
-
-        fprintf('Elev %d°, SNR %+4.1f dB | pDet: MATLAB=%.3f SRS=%.3f | MAE(us): MATLAB=%.3f SRS=%.3f\n', ...
+        
+        fprintf(['Elev %d°, SNR %+4.1f dB | pDet: MATLAB=%.3f SRS=%.3f ', ...
+                 '| MAE(us): MATLAB=%.3f SRS=%.3f | precomp=%d, useFreqOffsetHz=%.1f Hz\n'], ...
             elev, snr_dB, ...
             pDet_MATLAB(iEl,iSNR), pDet_SRS(iEl,iSNR), ...
-            mae_MATLAB_us(iEl,iSNR), mae_SRS_us(iEl,iSNR));
+            mae_MATLAB_us(iEl,iSNR), mae_SRS_us(iEl,iSNR), ...
+            enablePrecomp, useFreqOffsetHz);
 
     end % SNR loop
 end % elevation loop
@@ -235,9 +260,7 @@ for iEl = 1:nElev
 end
 legend('MATLAB','SRSRAN');
 
-
 %% --------------------- Cleanup ----------------------------------------
 release(PRACHDetector);
 
 end
-
