@@ -8,7 +8,7 @@ srsPRACHDetector (srsRAN-matlab C++ MEX)
 
 The goal is to evaluate detection probability, timing estimation accuracy, and robustness against satellite Doppler, under realistic NTN channel models and across multiple elevation angles.
 
-Dependencies:
+*Dependencies*
 MATLAB Toolboxes:
   - 5G Toolbox
   - Satellite Communications Toolbox
